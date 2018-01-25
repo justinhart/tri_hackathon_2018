@@ -7,7 +7,9 @@
 #include <pcl/segmentation/sac_segmentation.h>
 #include <ros/ros.h>
 #include <pcl_ros/point_cloud.h>
+#include <pcl_ros/impl/transforms.hpp>
 #include <pcl/point_types.h>
+#include <tf/transform_listener.h>
 
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
 
@@ -19,24 +21,20 @@ public:
     Segmenter() : tfListener() {
     }
 
-    void cloud_cb(const PointCloud::ConstPtr& cloud) {
-        std::cerr << "Point cloud data: " << cloud->points.size() << " points" << std::endl;
+    void cloud_cb(const PointCloud::ConstPtr& cloudOrig) {
+        std::cerr << "Point cloud data: " << cloudOrig->points.size() << " points" << std::endl;
 
         // Transform to map frame
-        /*tf::StampedTransform transform;
+        PointCloud::Ptr cloud(new PointCloud);
+        tf::StampedTransform transform;
         try {
             // Look up transform
-            this->tfListener->lookupTransform("/map", cloud->header.frame_id, ros::Time(0), transform);
-            pcl_ros::transformPointCloud(*cloud), (*cloud_plane_baselink), transform);
-                cloud->header.frame_id = TARGET_FRAME;
-                cloud_plane_baselink->header.frame_id = TARGET_FRAME;
-                break;
-            }
-            //keep trying until we get the transform
-            catch (tf::TransformException &ex){
-                ROS_ERROR_THROTTLE(2,"%s",ex.what());
-                ROS_WARN_THROTTLE(2, "   Waiting for tf to transform desired SAC axis to point cloud frame. trying again");
-        }*/
+            this->tfListener.waitForTransform("map", cloudOrig->header.frame_id, ros::Time(0), ros::Duration(0.1));
+            this->tfListener.lookupTransform("map", cloudOrig->header.frame_id, ros::Time(0), transform);
+            pcl_ros::transformPointCloud(*cloudOrig, *cloud, transform);
+        } catch (tf::TransformException &ex) {
+            ROS_WARN("%s", ex.what());
+        }
 
         pcl::ModelCoefficients coefficients;
         pcl::PointIndices inliers;
