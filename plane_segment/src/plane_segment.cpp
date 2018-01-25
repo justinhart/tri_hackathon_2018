@@ -8,38 +8,43 @@
 #include <ros/ros.h>
 #include <pcl_ros/point_cloud.h>
 #include <pcl_ros/impl/transforms.hpp>
+#include <pcl/filters/extract_indices.h>
 #include <pcl/point_types.h>
 #include <tf/transform_listener.h>
 
-typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
+typedef pcl::PointXYZRGB PointT;
+typedef pcl::PointCloud<PointT> PointCloudT;
 
 class Segmenter {
 private:
     tf::TransformListener tfListener;
+    ros::Publisher cloud_pub;
 
 public:
-    Segmenter() : tfListener() {
+    Segmenter(ros::NodeHandle node) : tfListener() {
+        this->cloud_pub = node.advertise<PointCloudT>("plane_segment", 1);
     }
 
-    void cloud_cb(const PointCloud::ConstPtr& cloudOrig) {
+    void cloud_cb(const PointCloudT::ConstPtr& cloudOrig) {
         std::cerr << "Point cloud data: " << cloudOrig->points.size() << " points" << std::endl;
 
         // Transform to map frame
-        PointCloud::Ptr cloud(new PointCloud);
+        PointCloudT::Ptr cloud(new PointCloudT);
         tf::StampedTransform transform;
         try {
             // Look up transform
             this->tfListener.waitForTransform("map", cloudOrig->header.frame_id, ros::Time(0), ros::Duration(0.1));
             this->tfListener.lookupTransform("map", cloudOrig->header.frame_id, ros::Time(0), transform);
             pcl_ros::transformPointCloud(*cloudOrig, *cloud, transform);
+            cloud->header.frame_id = "map";
         } catch (tf::TransformException &ex) {
             ROS_WARN("%s", ex.what());
         }
 
         pcl::ModelCoefficients coefficients;
-        pcl::PointIndices inliers;
+        pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
         // Create the segmentation object
-        pcl::SACSegmentation<pcl::PointXYZ> seg;
+        pcl::SACSegmentation<PointT> seg;
         // Optional
         seg.setOptimizeCoefficients(true);
         // Mandatory
@@ -53,19 +58,28 @@ public:
         seg.setEpsAngle(3. * M_PI / 180.);
 
         seg.setInputCloud(cloud);
-        seg.segment(inliers, coefficients);
+        seg.segment(*inliers, coefficients);
 
-        if (inliers.indices.size() == 0) {
+        if (inliers->indices.size() == 0) {
           PCL_ERROR ("Could not estimate a planar model for the given dataset.");
           return;
         }
+
+        pcl::ExtractIndices<PointT> extract;
+
+        extract.setInputCloud(cloud);
+        extract.setIndices(inliers);
+        extract.setNegative(false);
+        extract.filter(*cloud);
 
         std::cerr << "Model coefficients: " << coefficients.values[0] << " " 
                                             << coefficients.values[1] << " "
                                             << coefficients.values[2] << " " 
                                             << coefficients.values[3] << std::endl;
-      
-        std::cerr << "Model inliers: " << inliers.indices.size () << std::endl;
+
+        std::cerr << "Model inliers: " << inliers->indices.size() << std::endl;
+
+        this->cloud_pub.publish(cloud);
 
     }
 };
@@ -74,7 +88,7 @@ int main (int argc, char** argv) {
     ros::init(argc, argv, "plane_segment");
     ros::NodeHandle node;
 
-    Segmenter seg;
+    Segmenter seg(node);
     ros::Subscriber sub = node.subscribe("/hsrb/head_rgbd_sensor/depth_registered/rectified_points", 1, &Segmenter::cloud_cb, &seg);
 
     ros::spin();
